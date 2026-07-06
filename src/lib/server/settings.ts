@@ -1,21 +1,13 @@
 import { createServerFn } from '@tanstack/react-start'
-import { eq } from 'drizzle-orm'
 import { db } from '@/db'
 import { settings } from '@/db/schema'
-import type { Settings } from '@/db/schema'
+import { getSettingsRow } from './db-helpers'
 
 export interface SettingsView {
   clientKey: string
   publicBaseUrl: string
   hasSecret: boolean
   updatedAt: number | null
-}
-
-/** Raw settings row incl. the secret — server-only, never sent to the client. */
-export async function getSettingsRow(): Promise<Settings | null> {
-  return (
-    (await db.query.settings.findFirst({ where: eq(settings.id, 1) })) ?? null
-  )
 }
 
 /** Settings for the UI, with the client secret redacted to a boolean. */
@@ -65,3 +57,11 @@ export const saveSettings = createServerFn({ method: 'POST' })
       .onConflictDoUpdate({ target: settings.id, set: values })
     return { ok: true as const }
   })
+
+/** Wipe the stored TikTok app credentials + config (the single settings row). */
+export const clearSettings = createServerFn({ method: 'POST' }).handler(
+  async () => {
+    await db.delete(settings)
+    return { ok: true as const }
+  },
+)

@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { eq } from 'drizzle-orm'
 import { db } from '@/db'
 import { carouselImage, carouselPost } from '@/db/schema'
-import { getSettingsRow } from './settings'
+import { getSettingsRow } from './db-helpers'
 import { getValidAccessToken } from './tokens'
 import { fetchPublishStatus, initCarouselPost } from '@/lib/tiktok'
 
@@ -61,7 +61,7 @@ export const createCarousel = createServerFn({ method: 'POST' })
     const imageRows = data.images.map((img, i) => ({
       postId: post.id,
       filename: img.filename,
-      url: `${baseUrl}/media/${img.filename}`,
+      url: `${baseUrl}/tiktok/media/${img.filename}`,
       sortOrder: i,
       isCover: i === data.coverIndex,
     }))
@@ -158,7 +158,7 @@ export const listPosts = createServerFn({ method: 'GET' }).handler(
         publishId: p.publishId,
         createdAt: p.createdAt.getTime(),
         imageCount: imgs.length,
-        coverUrl: cover ? `/media/${cover.filename}` : null,
+        coverUrl: cover ? `/tiktok/media/${cover.filename}` : null,
       })
     }
     return summaries

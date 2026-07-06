@@ -1,6 +1,12 @@
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { uploadImage } from '@/lib/server/upload'
+import { applyOverlay, renderOverlayPreview } from '@/lib/server/overlay'
+import type {
+  OverlayParams,
+  OverlayPosition,
+  OverlaySize,
+} from '@/lib/server/overlay'
 import { createCarousel } from '@/lib/server/carousel'
 import { getConnectedAccount } from '@/lib/server/account'
 import { getSettings } from '@/lib/server/settings'
@@ -22,13 +28,33 @@ export const Route = createFileRoute('/compose')({
 })
 
 interface Img {
+  /** The original normalized upload — stable id, never changes; overlays render from it. */
+  baseFilename: string
+  /** The file actually posted: the base, or an overlay-burned derivative. */
   filename: string
   url: string
   width: number
   height: number
+  overlay: OverlayParams | null
 }
 
 const MAX_IMAGES = 35
+
+const COLORS: Array<{ hex: string; label: string }> = [
+  { hex: '#ffffff', label: 'White' },
+  { hex: '#16130c', label: 'Ink' },
+  { hex: '#ff4a2f', label: 'Coral' },
+  { hex: '#f4b000', label: 'Sun' },
+  { hex: '#0f766e', label: 'Teal' },
+]
+
+const DEFAULT_OVERLAY: OverlayParams = {
+  text: '',
+  position: 'top',
+  color: '#ffffff',
+  band: true,
+  size: 'M',
+}
 
 function Compose() {
   const { ready, hasAccount, hasBaseUrl } = Route.useLoaderData()
@@ -49,6 +75,13 @@ function Compose() {
     status: string
   } | null>(null)
 
+  // Overlay editor: which image (by baseFilename) is open, plus the working draft.
+  const [editing, setEditing] = useState<string | null>(null)
+  const [draft, setDraft] = useState<OverlayParams>(DEFAULT_OVERLAY)
+  const [applying, setApplying] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  const editingImg = images.find((i) => i.baseFilename === editing) ?? null
+
   async function handleFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return
     setError(null)
@@ -65,10 +98,12 @@ function Compose() {
             : [
                 ...prev,
                 {
+                  baseFilename: res.filename,
                   filename: res.filename,
-                  url: `/media/${res.filename}`,
+                  url: `/tiktok/media/${res.filename}`,
                   width: res.width,
                   height: res.height,
+                  overlay: null,
                 },
               ],
         )
@@ -82,13 +117,15 @@ function Compose() {
     }
   }
 
-  function remove(filename: string) {
-    setImages((prev) => prev.filter((i) => i.filename !== filename))
+  function remove(baseFilename: string) {
+    setImages((prev) => prev.filter((i) => i.baseFilename !== baseFilename))
     setCoverFile((prev) =>
-      prev === filename
-        ? (images.find((i) => i.filename !== filename)?.filename ?? null)
+      prev === baseFilename
+        ? (images.find((i) => i.baseFilename !== baseFilename)?.baseFilename ??
+          null)
         : prev,
     )
+    if (editing === baseFilename) setEditing(null)
   }
 
   function move(index: number, dir: -1 | 1) {
@@ -101,6 +138,62 @@ function Compose() {
     })
   }
 
+  function openEditor(img: Img) {
+    setEditing(img.baseFilename)
+    setDraft(img.overlay ?? DEFAULT_OVERLAY)
+    setEditError(null)
+  }
+
+  async function saveOverlay() {
+    if (!editingImg) return
+    // Empty text means "remove the overlay" — revert to the untouched base.
+    if (!draft.text.trim()) {
+      clearOverlay()
+      return
+    }
+    setApplying(true)
+    setEditError(null)
+    try {
+      const res = await applyOverlay({
+        data: { baseFilename: editingImg.baseFilename, ...draft },
+      })
+      setImages((prev) =>
+        prev.map((i) =>
+          i.baseFilename === editingImg.baseFilename
+            ? {
+                ...i,
+                filename: res.filename,
+                url: `/tiktok/media/${res.filename}`,
+                overlay: draft,
+              }
+            : i,
+        ),
+      )
+      setEditing(null)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to apply text')
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  function clearOverlay() {
+    if (!editingImg) return
+    setImages((prev) =>
+      prev.map((i) =>
+        i.baseFilename === editingImg.baseFilename
+          ? {
+              ...i,
+              filename: i.baseFilename,
+              url: `/tiktok/media/${i.baseFilename}`,
+              overlay: null,
+            }
+          : i,
+      ),
+    )
+    setEditing(null)
+  }
+
   async function post() {
     if (images.length < 1) {
       setError('Add at least one image.')
@@ -111,7 +204,7 @@ function Compose() {
     try {
       const coverIndex = Math.max(
         0,
-        images.findIndex((i) => i.filename === coverFile),
+        images.findIndex((i) => i.baseFilename === coverFile),
       )
       const res = await createCarousel({
         data: {
@@ -137,6 +230,7 @@ function Compose() {
     setDescription('')
     setResult(null)
     setError(null)
+    setEditing(null)
   }
 
   if (result) {
@@ -237,31 +331,51 @@ function Compose() {
           </label>
 
           {images.length > 0 && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-3">
               {images.map((img, i) => {
-                const isCover = img.filename === coverFile
+                const isCover = img.baseFilename === coverFile
                 return (
                   <div
-                    key={img.filename}
+                    key={img.baseFilename}
                     className={`panel-flat relative overflow-hidden ${
                       isCover
                         ? 'ring-2 ring-coral ring-offset-2 ring-offset-paper'
                         : ''
                     }`}
                   >
-                    <img
-                      src={img.url}
-                      alt=""
-                      className="aspect-square w-full object-cover"
-                    />
-                    <span className="badge absolute left-1.5 top-1.5 bg-white">
-                      {i + 1}
-                    </span>
-                    {isCover && (
-                      <span className="badge absolute right-1.5 top-1.5 bg-coral text-white">
-                        Cover
+                    <button
+                      type="button"
+                      onClick={() => openEditor(img)}
+                      title="Preview & add text"
+                      className="group relative block w-full cursor-pointer"
+                      style={{
+                        aspectRatio: `${img.width} / ${img.height}`,
+                      }}
+                    >
+                      <img
+                        src={img.url}
+                        alt=""
+                        className="block h-full w-full object-cover"
+                      />
+                      <span className="absolute inset-0 flex items-center justify-center bg-ink/0 opacity-0 transition-all group-hover:bg-ink/40 group-hover:opacity-100">
+                        <span className="badge bg-white">
+                          {img.overlay ? 'Edit text' : 'Preview · Add text'}
+                        </span>
                       </span>
-                    )}
+                      <span className="badge absolute left-1.5 top-1.5 bg-white">
+                        {i + 1}
+                      </span>
+                      {isCover && (
+                        <span className="badge absolute right-1.5 top-1.5 bg-coral text-white">
+                          Cover
+                        </span>
+                      )}
+                      {img.overlay && (
+                        <span className="badge absolute bottom-1.5 left-1.5 bg-ink text-paper">
+                          Aa Text
+                        </span>
+                      )}
+                    </button>
                     <div className="flex items-center justify-between border-t-2 border-ink bg-panel px-1 py-1">
                       <div className="flex gap-1">
                         <IconBtn
@@ -280,17 +394,23 @@ function Compose() {
                         </IconBtn>
                       </div>
                       <div className="flex gap-1">
+                        <IconBtn
+                          label={img.overlay ? 'Edit text' : 'Add text'}
+                          onClick={() => openEditor(img)}
+                        >
+                          Aa
+                        </IconBtn>
                         {!isCover && (
                           <IconBtn
                             label="Set as cover"
-                            onClick={() => setCoverFile(img.filename)}
+                            onClick={() => setCoverFile(img.baseFilename)}
                           >
                             ★
                           </IconBtn>
                         )}
                         <IconBtn
                           label="Remove"
-                          onClick={() => remove(img.filename)}
+                          onClick={() => remove(img.baseFilename)}
                         >
                           ✕
                         </IconBtn>
@@ -354,7 +474,268 @@ function Compose() {
           </p>
         </div>
       </div>
+
+      {editingImg && (
+        <OverlayEditor
+          key={editingImg.baseFilename}
+          img={editingImg}
+          draft={draft}
+          setDraft={setDraft}
+          applying={applying}
+          error={editError}
+          onApply={saveOverlay}
+          onClear={clearOverlay}
+          onCancel={() => setEditing(null)}
+        />
+      )}
     </div>
+  )
+}
+
+function OverlayEditor({
+  img,
+  draft,
+  setDraft,
+  applying,
+  error,
+  onApply,
+  onClear,
+  onCancel,
+}: {
+  img: Img
+  draft: OverlayParams
+  setDraft: React.Dispatch<React.SetStateAction<OverlayParams>>
+  applying: boolean
+  error: string | null
+  onApply: () => void
+  onClear: () => void
+  onCancel: () => void
+}) {
+  // The preview IS the real server render — same code that Apply persists — so
+  // what's shown here is byte-for-byte what posts (emoji included). Debounced so
+  // typing doesn't fire a request per keystroke.
+  const [previewSrc, setPreviewSrc] = useState<string | null>(
+    img.overlay ? img.url : null,
+  )
+  const [rendering, setRendering] = useState(false)
+
+  useEffect(() => {
+    if (!draft.text.trim()) {
+      setPreviewSrc(null)
+      setRendering(false)
+      return
+    }
+    let cancelled = false
+    setRendering(true)
+    const t = setTimeout(() => {
+      renderOverlayPreview({
+        data: { baseFilename: img.baseFilename, ...draft },
+      })
+        .then((res) => {
+          if (!cancelled) setPreviewSrc(res.dataUrl)
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setRendering(false)
+        })
+    }, 350)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [draft, img.baseFilename])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-5 flex items-center justify-between">
+          <div>
+            <p className="eyebrow">Text overlay</p>
+            <h2 className="wordmark text-2xl">Add text on image</h2>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            className="btn btn-sm"
+            onClick={onCancel}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* Live preview at the image's true aspect ratio (exactly how it
+              appears in the carousel). The <img> is the real server render, so
+              it's identical to what Apply persists. `self-start` keeps the grid
+              from stretching and distorting the ratio. */}
+          <div
+            className="relative w-full self-start overflow-hidden border-2 border-ink bg-ink/5"
+            style={{ aspectRatio: `${img.width} / ${img.height}` }}
+          >
+            <img
+              src={previewSrc ?? `/tiktok/media/${img.baseFilename}`}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+            {rendering && (
+              <span className="badge absolute right-1.5 top-1.5 bg-white">
+                Rendering…
+              </span>
+            )}
+          </div>
+
+          {/* Controls */}
+          <div className="space-y-4">
+            <label className="block">
+              <span className="label">Text</span>
+              <textarea
+                autoFocus
+                className="field mt-1.5 min-h-20 resize-y"
+                value={draft.text}
+                maxLength={200}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, text: e.target.value }))
+                }
+                placeholder="Type overlay text. Enter for a new line."
+              />
+              <span className="mt-1 block text-right font-mono text-[0.68rem] text-muted">
+                {draft.text.length}/200
+              </span>
+            </label>
+
+            <div>
+              <span className="label">Position</span>
+              <div className="mt-1.5 flex gap-1.5">
+                {(['top', 'center', 'bottom'] as Array<OverlayPosition>).map(
+                  (p) => (
+                    <Seg
+                      key={p}
+                      active={draft.position === p}
+                      onClick={() => setDraft((d) => ({ ...d, position: p }))}
+                    >
+                      {p}
+                    </Seg>
+                  ),
+                )}
+              </div>
+            </div>
+
+            <div>
+              <span className="label">Size</span>
+              <div className="mt-1.5 flex gap-1.5">
+                {(['S', 'M', 'L'] as Array<OverlaySize>).map((s) => (
+                  <Seg
+                    key={s}
+                    active={draft.size === s}
+                    onClick={() => setDraft((d) => ({ ...d, size: s }))}
+                  >
+                    {s}
+                  </Seg>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <span className="label">Color</span>
+              <div className="mt-1.5 flex gap-2">
+                {COLORS.map((c) => (
+                  <button
+                    key={c.hex}
+                    type="button"
+                    aria-label={c.label}
+                    title={c.label}
+                    onClick={() => setDraft((d) => ({ ...d, color: c.hex }))}
+                    style={{ background: c.hex }}
+                    className={`h-8 w-8 border-2 border-ink transition-transform ${
+                      draft.color === c.hex
+                        ? 'ring-2 ring-coral ring-offset-2 ring-offset-panel'
+                        : 'hover:-translate-y-0.5'
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2.5">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-coral"
+                checked={draft.band}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, band: e.target.checked }))
+                }
+              />
+              <span className="text-sm font-medium">
+                Contrast band behind text
+              </span>
+            </label>
+
+            {error && (
+              <div className="panel-flat bg-coral p-2.5 text-sm font-medium text-white">
+                {error}
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={onApply}
+                disabled={applying}
+              >
+                {applying ? 'Applying…' : 'Apply text'}
+              </button>
+              {img.overlay && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={onClear}
+                  disabled={applying}
+                >
+                  Remove text
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn"
+                onClick={onCancel}
+                disabled={applying}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Seg({
+  children,
+  active,
+  onClick,
+}: {
+  children: React.ReactNode
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-1 border-2 border-ink px-2 py-1.5 font-display text-xs font-bold uppercase tracking-wide transition-colors ${
+        active ? 'bg-ink text-paper' : 'bg-panel hover:bg-sun'
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 

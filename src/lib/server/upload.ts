@@ -3,8 +3,7 @@ import { writeFile, mkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import sharp from 'sharp'
-
-export const MEDIA_DIR = process.env.MEDIA_DIR ?? path.resolve('media')
+import { mediaDir } from './media'
 
 export interface UploadResult {
   filename: string
@@ -27,7 +26,8 @@ export const uploadImage = createServerFn({ method: 'POST' })
     return { file }
   })
   .handler(async ({ data }): Promise<UploadResult> => {
-    await mkdir(MEDIA_DIR, { recursive: true })
+    const dir = mediaDir()
+    await mkdir(dir, { recursive: true })
     const input = Buffer.from(await data.file.arrayBuffer())
 
     const { data: out, info } = await sharp(input)
@@ -42,6 +42,6 @@ export const uploadImage = createServerFn({ method: 'POST' })
       .toBuffer({ resolveWithObject: true })
 
     const filename = `${randomUUID()}.jpg`
-    await writeFile(path.join(MEDIA_DIR, filename), out)
+    await writeFile(path.join(dir, filename), out)
     return { filename, width: info.width, height: info.height }
   })

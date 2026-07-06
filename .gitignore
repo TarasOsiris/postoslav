@@ -12,7 +12,9 @@ dist-ssr
 __unconfig*
 todos.json
 
-# App data
-data/
-media/
+# App data (root-anchored so these only ignore the runtime dirs at the project
+# root — an unanchored `media/` also matched `src/routes/tiktok/media/` and
+# silently excluded the media route's source file from git).
+/data/
+/media/
 dev.db*

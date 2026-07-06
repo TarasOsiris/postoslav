@@ -1,17 +1,23 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
-import { getSettings, saveSettings } from '@/lib/server/settings'
+import { clearSettings, getSettings, saveSettings } from '@/lib/server/settings'
 import { disconnectAccount, getConnectedAccount } from '@/lib/server/account'
 
 interface SettingsSearch {
   connected?: string
   error?: string
+  error_type?: string
+  error_description?: string
 }
 
 export const Route = createFileRoute('/settings')({
   validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
     connected: search.connected ? String(search.connected) : undefined,
     error: search.error ? String(search.error) : undefined,
+    error_type: search.error_type ? String(search.error_type) : undefined,
+    error_description: search.error_description
+      ? String(search.error_description)
+      : undefined,
   }),
   loader: async () => {
     const [settings, account] = await Promise.all([
@@ -33,10 +39,13 @@ function Settings() {
   const [publicBaseUrl, setPublicBaseUrl] = useState(settings.publicBaseUrl)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const savedReady =
     !!settings.clientKey && settings.hasSecret && !!settings.publicBaseUrl
+  const hasStored =
+    !!settings.clientKey || settings.hasSecret || !!settings.publicBaseUrl
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault()
@@ -61,6 +70,29 @@ function Settings() {
     }
   }
 
+  async function onClear() {
+    if (
+      !window.confirm(
+        'Clear saved TikTok app credentials (client key, secret, and public base URL)? This cannot be undone.',
+      )
+    )
+      return
+    setClearing(true)
+    setSaved(false)
+    setError(null)
+    try {
+      await clearSettings()
+      setClientKey('')
+      setClientSecret('')
+      setPublicBaseUrl('')
+      await router.invalidate()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear')
+    } finally {
+      setClearing(false)
+    }
+  }
+
   async function onDisconnect() {
     await disconnectAccount()
     await router.invalidate()
@@ -77,7 +109,21 @@ function Settings() {
         <Banner tone="success">TikTok account connected. 🎉</Banner>
       )}
       {search.error && (
-        <Banner tone="error">Connection failed: {search.error}</Banner>
+        <Banner tone="error">
+          <p className="font-display font-bold">Connection failed</p>
+          <p className="mt-1 font-mono text-xs">
+            {search.error}
+            {search.error_type && ` · ${search.error_type}`}
+          </p>
+          {search.error_description && (
+            <p className="mt-1 text-sm">{search.error_description}</p>
+          )}
+          {oauthErrorHint(search.error, search.error_type) && (
+            <p className="mt-2 border-t border-white/40 pt-2 text-sm">
+              {oauthErrorHint(search.error, search.error_type)}
+            </p>
+          )}
+        </Banner>
       )}
 
       {/* Credentials */}
@@ -106,6 +152,13 @@ function Settings() {
             placeholder="aw1234567890abcdef"
             autoComplete="off"
           />
+          <p className="mt-1.5 text-xs text-muted">
+            <span className="font-semibold text-ink">Sandbox</span> and{' '}
+            <span className="font-semibold text-ink">Production</span> use
+            separate keys. A Sandbox key only authorizes accounts added as{' '}
+            <span className="font-semibold text-ink">Target Users</span>; a
+            Production key only works after the app is approved &amp; Live.
+          </p>
         </Field>
 
         <Field label="Client secret">
@@ -138,9 +191,23 @@ function Settings() {
         </Field>
 
         <div className="flex items-center gap-3">
-          <button type="submit" className="btn btn-primary" disabled={saving}>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={saving || clearing}
+          >
             {saving ? 'Saving…' : 'Save settings'}
           </button>
+          {hasStored && (
+            <button
+              type="button"
+              className="btn"
+              onClick={onClear}
+              disabled={saving || clearing}
+            >
+              {clearing ? 'Clearing…' : 'Clear settings'}
+            </button>
+          )}
           {saved && <span className="badge bg-teal text-white">Saved</span>}
           {error && <span className="text-sm text-coral">{error}</span>}
         </div>
@@ -203,6 +270,22 @@ function Settings() {
       <Callout />
     </div>
   )
+}
+
+/**
+ * Human guidance for the OAuth errors TikTok can redirect back with. Returns
+ * `null` for unrecognized errors (the raw code/type is still shown above).
+ */
+function oauthErrorHint(error: string, errorType?: string): string | null {
+  if (error === 'unauthorized_client' || errorType === 'client_key')
+    return "TikTok rejected the client key. Sandbox and Production have separate keys — a Sandbox key only works for accounts added as Target Users, and a Production key only works once your app is approved & Live. Check that the key in Settings matches the environment you're logging into."
+  if (error === 'access_denied')
+    return 'You declined the authorization on TikTok. Approve the requested permissions to connect.'
+  if (errorType === 'scope' || error === 'scope_not_authorized')
+    return 'A requested scope (user.info.basic, video.upload) is not enabled for this app. Add Login Kit + the Content Posting API to the app and try again.'
+  if (errorType === 'redirect_uri' || error === 'redirect_uri')
+    return 'The redirect URI must be registered in your TikTok app exactly as /api/auth/tiktok/callback on your Public base URL.'
+  return null
 }
 
 function Field({

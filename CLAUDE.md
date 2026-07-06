@@ -35,8 +35,15 @@ Start/Router code, run `npx @tanstack/intent@latest list` to find a matching ski
   `account` (getConnected/disconnect + `upsertAccountFromToken`), `tokens` (`getValidAccessToken` refresh
   helper), `carousel` (`createCarousel`/`getPublishStatus`/`listPosts`), `upload` (`uploadImage`).
 - **Server routes** (HTTP, `createFileRoute(...).server.handlers`):
-  `src/routes/api/auth/tiktok/{start,callback}.ts` (OAuth) and `src/routes/media/$file.ts`
+  `src/routes/api/auth/tiktok/{start,callback}.ts` (OAuth) and `src/routes/tiktok/media/$file.ts`
   (serves uploaded bytes to TikTok, no redirect).
+- **Global middleware** (`src/start.ts`, `createStart`): an optional Basic-auth **access gate**
+  (`APP_ACCESS_TOKEN`, allowlisting the TikTok callback/media/verification paths) + `createCsrfMiddleware`
+  (Origin/Sec-Fetch-Site check on non-GET). Keep `src/start.ts` free of `node:*` imports — it is
+  referenced by the client build too.
+- **Server-only helpers** (plain, non-`createServerFn` exports): `db-helpers.ts` (`getSettingsRow`,
+  `upsertAccountFromToken`), `tokens.ts`, `media.ts` (`mediaDir()`). Never import these from client
+  components — the `db`/`sharp`/`node:fs` they pull in would enter the browser bundle.
 - **TikTok client** (`src/lib/tiktok.ts`): pure `fetch`, no DB — authorize URL, token exchange/refresh,
   `getUserInfo`, `initCarouselPost`, `fetchPublishStatus`.
 - **DB** (`src/db/{index,schema}.ts`): tables `settings` (single row id=1), `tiktok_account`,
@@ -47,7 +54,9 @@ Start/Router code, run `npx @tanstack/intent@latest list` to find a matching ski
 - **OAuth** (Login Kit): app has `client_key`/`client_secret` (in Settings); each account is linked via
   the OAuth flow. Scopes `user.info.basic,video.upload`. Access token 24h, refresh token 365d.
 - **Images = PULL_FROM_URL only** from a **TikTok-verified HTTPS domain**. We host them at
-  `publicBaseUrl + /media/<file>`. Localhost can't be pulled — needs a tunnel. JPEG/WebP only, ≤1080p,
+  `publicBaseUrl + /tiktok/media/<file>` (inside the verified `/tiktok/` URL-prefix; the
+  `public/tiktok/` + `public/sb/` `tiktok*.txt` files are TikTok's domain-verification tokens).
+  Localhost can't be pulled — needs a tunnel. JPEG/WebP only, ≤1080p,
   ≤20MB, ≤35 images. `upload.ts` normalizes everything to JPEG ≤1080px via `sharp`.
 - **Publish mode = `MEDIA_UPLOAD`** (inbox draft) → avoids the unaudited-app `SELF_ONLY` restriction;
   the user finishes publishing in the TikTok app. Endpoint `POST /v2/post/publish/content/init/` with
@@ -58,12 +67,21 @@ Start/Router code, run `npx @tanstack/intent@latest list` to find a matching ski
 ## Conventions / gotchas
 
 - **Path aliases**: `@/*` and `#/*` → `src/*` (both in tsconfig `paths`). Use `@/…`.
-- **`verbatimModuleSyntax`** is on — type-only imports must use `import type` / inline `type`.
-  `noUnusedLocals`/`noUnusedParameters` are on too (typecheck fails on unused imports).
+- **`verbatimModuleSyntax`** is **off** (TanStack Start's recommended default — leaving it on can defeat
+  the compiler's stripping of server-only imports from the client bundle). The codebase still prefers
+  `import type` / inline `type` by convention. `noUnusedLocals`/`noUnusedParameters` are on (typecheck
+  fails on unused imports).
 - **Tailwind v4 CSS-first**: theme tokens + component classes (`.panel`, `.btn`, `.badge`, `.field`,
   etc.) live in `src/styles.css` under `@theme` / `@layer components`. Aesthetic = risograph print-shop
   (paper bg, ink borders, hard offset shadows, coral/teal accents; Bricolage Grotesque + Hanken Grotesk).
 - **Native modules** (`better-sqlite3`, `sharp`) must stay external in the build (Nitro handles this).
-  Keep all `db` / `node:fs` / `sharp` imports inside server fn / server route modules so they never enter
-  the client bundle.
+  Keep all `db` / `node:fs` / `node:path` / `sharp` imports inside server fn / server route modules so
+  they never enter the client bundle.
+- **Server-only code must live *inside* handler bodies, never at module scope.** `createServerFn` strips
+  the handler closure (and imports used only by it) from the client build, but **module-scope statements
+  survive** — a top-level `const X = process.env.Y ?? path.resolve('media')` in a client-imported server-fn
+  module ships `node:path` to the browser and crashes it ("node:path externalized"). Read env / touch node
+  built-ins lazily inside the handler (see `mediaDir()` in `src/lib/server/media.ts`).
+- **Env vars** are server-only (no `VITE_` prefix): `APP_ACCESS_TOKEN` (access gate, see `src/start.ts`),
+  `DATABASE_URL`, `MEDIA_DIR`. See `.env.example`.
 - No test framework wired for app logic (Vitest is present from the scaffold but unused).

@@ -12,7 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ComposeRouteImport } from './routes/compose'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as MediaFileRouteImport } from './routes/media/$file'
+import { Route as TiktokMediaFileRouteImport } from './routes/tiktok/media/$file'
 import { Route as ApiAuthTiktokStartRouteImport } from './routes/api/auth/tiktok/start'
 import { Route as ApiAuthTiktokCallbackRouteImport } from './routes/api/auth/tiktok/callback'
 
@@ -31,9 +31,9 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MediaFileRoute = MediaFileRouteImport.update({
-  id: '/media/$file',
-  path: '/media/$file',
+const TiktokMediaFileRoute = TiktokMediaFileRouteImport.update({
+  id: '/tiktok/media/$file',
+  path: '/tiktok/media/$file',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthTiktokStartRoute = ApiAuthTiktokStartRouteImport.update({
@@ -51,7 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/compose': typeof ComposeRoute
   '/settings': typeof SettingsRoute
-  '/media/$file': typeof MediaFileRoute
+  '/tiktok/media/$file': typeof TiktokMediaFileRoute
   '/api/auth/tiktok/callback': typeof ApiAuthTiktokCallbackRoute
   '/api/auth/tiktok/start': typeof ApiAuthTiktokStartRoute
 }
@@ -59,7 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/compose': typeof ComposeRoute
   '/settings': typeof SettingsRoute
-  '/media/$file': typeof MediaFileRoute
+  '/tiktok/media/$file': typeof TiktokMediaFileRoute
   '/api/auth/tiktok/callback': typeof ApiAuthTiktokCallbackRoute
   '/api/auth/tiktok/start': typeof ApiAuthTiktokStartRoute
 }
@@ -68,7 +68,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/compose': typeof ComposeRoute
   '/settings': typeof SettingsRoute
-  '/media/$file': typeof MediaFileRoute
+  '/tiktok/media/$file': typeof TiktokMediaFileRoute
   '/api/auth/tiktok/callback': typeof ApiAuthTiktokCallbackRoute
   '/api/auth/tiktok/start': typeof ApiAuthTiktokStartRoute
 }
@@ -78,7 +78,7 @@ export interface FileRouteTypes {
     | '/'
     | '/compose'
     | '/settings'
-    | '/media/$file'
+    | '/tiktok/media/$file'
     | '/api/auth/tiktok/callback'
     | '/api/auth/tiktok/start'
   fileRoutesByTo: FileRoutesByTo
@@ -86,7 +86,7 @@ export interface FileRouteTypes {
     | '/'
     | '/compose'
     | '/settings'
-    | '/media/$file'
+    | '/tiktok/media/$file'
     | '/api/auth/tiktok/callback'
     | '/api/auth/tiktok/start'
   id:
@@ -94,7 +94,7 @@ export interface FileRouteTypes {
     | '/'
     | '/compose'
     | '/settings'
-    | '/media/$file'
+    | '/tiktok/media/$file'
     | '/api/auth/tiktok/callback'
     | '/api/auth/tiktok/start'
   fileRoutesById: FileRoutesById
@@ -103,7 +103,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ComposeRoute: typeof ComposeRoute
   SettingsRoute: typeof SettingsRoute
-  MediaFileRoute: typeof MediaFileRoute
+  TiktokMediaFileRoute: typeof TiktokMediaFileRoute
   ApiAuthTiktokCallbackRoute: typeof ApiAuthTiktokCallbackRoute
   ApiAuthTiktokStartRoute: typeof ApiAuthTiktokStartRoute
 }
@@ -131,11 +131,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/media/$file': {
-      id: '/media/$file'
-      path: '/media/$file'
-      fullPath: '/media/$file'
-      preLoaderRoute: typeof MediaFileRouteImport
+    '/tiktok/media/$file': {
+      id: '/tiktok/media/$file'
+      path: '/tiktok/media/$file'
+      fullPath: '/tiktok/media/$file'
+      preLoaderRoute: typeof TiktokMediaFileRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/tiktok/start': {
@@ -159,7 +159,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ComposeRoute: ComposeRoute,
   SettingsRoute: SettingsRoute,
-  MediaFileRoute: MediaFileRoute,
+  TiktokMediaFileRoute: TiktokMediaFileRoute,
   ApiAuthTiktokCallbackRoute: ApiAuthTiktokCallbackRoute,
   ApiAuthTiktokStartRoute: ApiAuthTiktokStartRoute,
 }
@@ -168,10 +168,11 @@ export const routeTree = rootRouteImport
   ._addFileTypes<FileRouteTypes>()
 
 import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
+import type { startInstance } from './start.ts'
 declare module '@tanstack/react-start' {
   interface Register {
     ssr: true
     router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
   }
 }

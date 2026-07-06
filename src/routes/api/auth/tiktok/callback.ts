@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { getSettingsRow } from '@/lib/server/settings'
+import { getSettingsRow, upsertAccountFromToken } from '@/lib/server/db-helpers'
 import { consumeOAuthState } from '@/lib/server/oauth'
-import { upsertAccountFromToken } from '@/lib/server/account'
 import { exchangeCodeForToken } from '@/lib/tiktok'
 
 function toSettings(query: string): Response {
@@ -17,8 +16,16 @@ export const Route = createFileRoute('/api/auth/tiktok/callback')({
       GET: async ({ request }) => {
         const url = new URL(request.url)
         const oauthError = url.searchParams.get('error')
-        if (oauthError)
-          return toSettings(`error=${encodeURIComponent(oauthError)}`)
+        if (oauthError) {
+          // Forward TikTok's richer error fields so the Settings banner can
+          // explain *why* (e.g. error_type=client_key → sandbox/prod key mixup).
+          const out = new URLSearchParams({ error: oauthError })
+          const errorType = url.searchParams.get('error_type')
+          const errorDescription = url.searchParams.get('error_description')
+          if (errorType) out.set('error_type', errorType)
+          if (errorDescription) out.set('error_description', errorDescription)
+          return toSettings(out.toString())
+        }
 
         const code = url.searchParams.get('code')
         const state = url.searchParams.get('state')

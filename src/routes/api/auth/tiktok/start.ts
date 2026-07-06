@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { getSettingsRow } from '@/lib/server/settings'
+import { getSettingsRow } from '@/lib/server/db-helpers'
 import { createOAuthState } from '@/lib/server/oauth'
 import { buildAuthorizeUrl } from '@/lib/tiktok'
 
