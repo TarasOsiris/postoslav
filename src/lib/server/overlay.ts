@@ -6,12 +6,13 @@ import sharp from 'sharp'
 import type { OverlayOptions } from 'sharp'
 import { mediaDir } from './media'
 
-export type OverlayPosition = 'top' | 'center' | 'bottom'
 export type OverlaySize = 'S' | 'M' | 'L'
 
 export interface OverlayParams {
   text: string
-  position: OverlayPosition
+  /** Vertical position as a percentage of travel: 0 = top, 50 = center,
+   *  100 = bottom (interpolated over the same padded range the presets used). */
+  posY: number
   color: string
   band: boolean
   size: OverlaySize
@@ -23,7 +24,6 @@ export interface OverlayResult {
   height: number
 }
 
-const POSITIONS: ReadonlyArray<OverlayPosition> = ['top', 'center', 'bottom']
 const SIZES: ReadonlyArray<OverlaySize> = ['S', 'M', 'L']
 // Font size as a fraction of image width.
 const SIZE_SCALE: Record<OverlaySize, number> = { S: 0.055, M: 0.075, L: 0.1 }
@@ -55,9 +55,8 @@ function parseParams(input: unknown) {
     throw new Error('baseFilename is required')
   const text = String(raw.text ?? '').slice(0, MAX_TEXT)
   if (!text.trim()) throw new Error('Overlay text is empty')
-  const position = POSITIONS.includes(raw.position as OverlayPosition)
-    ? (raw.position as OverlayPosition)
-    : 'top'
+  const n = Math.round(Number(raw.posY))
+  const posY = Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 25
   const size = SIZES.includes(raw.size as OverlaySize)
     ? (raw.size as OverlaySize)
     : 'M'
@@ -65,7 +64,7 @@ function parseParams(input: unknown) {
     ? String(raw.color)
     : '#ffffff'
   const band = raw.band !== false
-  return { baseFilename, text, position, size, color, band }
+  return { baseFilename, text, posY, size, color, band }
 }
 
 /**
@@ -127,11 +126,10 @@ async function composeOverlay(
     th = fit.info.height
   }
 
+  // Interpolate the text-block top over the padded travel: posY 0 → padV (top),
+  // 100 → height-padV-th (bottom), 50 → dead center — matching the old presets.
   const padV = Math.round(height * 0.045)
-  let top: number
-  if (params.position === 'top') top = padV
-  else if (params.position === 'bottom') top = height - padV - th
-  else top = Math.round((height - th) / 2)
+  let top = Math.round(padV + (params.posY / 100) * (height - 2 * padV - th))
   top = Math.min(Math.max(0, top), Math.max(0, height - th))
   const left = Math.round((width - tw) / 2)
 

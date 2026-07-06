@@ -56,7 +56,7 @@ const COLORS: Array<{ hex: string; label: string }> = [
 
 const DEFAULT_OVERLAY: OverlayParams = {
   text: '',
-  position: 'top',
+  posY: 25,
   color: '#ffffff',
   band: true,
   size: 'M',
@@ -697,12 +697,36 @@ function OverlayControls({
         </span>
       </label>
 
-      <SegGroup
-        label="Position"
-        options={['top', 'center', 'bottom'] as const}
-        value={draft.position}
-        onSelect={(position) => setDraft((d) => ({ ...d, position }))}
-      />
+      <div>
+        <div className="flex items-baseline justify-between">
+          <span className="label">Vertical position</span>
+          <span className="font-mono text-[0.68rem] text-muted">
+            {draft.posY === 0
+              ? 'Top'
+              : draft.posY === 50
+                ? 'Center'
+                : draft.posY === 100
+                  ? 'Bottom'
+                  : `${draft.posY}%`}
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={draft.posY}
+          onChange={(e) =>
+            setDraft((d) => ({ ...d, posY: Number(e.target.value) }))
+          }
+          aria-label="Vertical position"
+          className="mt-1.5 w-full accent-coral"
+        />
+        <div className="flex justify-between font-mono text-[0.6rem] uppercase tracking-wide text-muted">
+          <span>Top</span>
+          <span>Bottom</span>
+        </div>
+      </div>
 
       <SegGroup
         label="Size"
@@ -778,7 +802,7 @@ function OverlayControls({
 function overlayEquals(a: OverlayParams, b: OverlayParams): boolean {
   return (
     a.text === b.text &&
-    a.position === b.position &&
+    a.posY === b.posY &&
     a.color === b.color &&
     a.band === b.band &&
     a.size === b.size
