@@ -20,6 +20,9 @@ export interface OverlayParams {
 
 export interface OverlayResult {
   filename: string
+  /** The composited JPEG inline as a data URL — byte-identical to the persisted
+   *  file, so the editor can show it instantly without a second fetch/render. */
+  dataUrl: string
   width: number
   height: number
 }
@@ -183,6 +186,9 @@ async function readBase(baseFilename: string): Promise<Buffer> {
  * fresh derived JPEG. Always renders from the ORIGINAL base file so repeated
  * edits never stack or degrade — the caller keeps `baseFilename` stable and
  * swaps in the returned `filename` for posting.
+ *
+ * Also returns the same bytes inline as a data URL so the editor can preview the
+ * result instantly (no extra fetch) while it auto-applies as the user types.
  */
 export const applyOverlay = createServerFn({ method: 'POST' })
   .validator(parseParams)
@@ -191,27 +197,8 @@ export const applyOverlay = createServerFn({ method: 'POST' })
     const { buffer, width, height } = await composeOverlay(base, data)
     const filename = `${randomUUID()}.jpg`
     await writeFile(path.join(mediaDir(), filename), buffer)
-    return { filename, width, height }
-  })
-
-export interface OverlayPreview {
-  dataUrl: string
-  width: number
-  height: number
-}
-
-/**
- * Render the overlay exactly like `applyOverlay` but return the bytes inline as
- * a data URL WITHOUT persisting a file — used for the live editor preview so
- * every keystroke doesn't orphan a JPEG. Because it shares `composeOverlay`, the
- * preview is byte-identical to what `applyOverlay` will later write.
- */
-export const renderOverlayPreview = createServerFn({ method: 'POST' })
-  .validator(parseParams)
-  .handler(async ({ data }): Promise<OverlayPreview> => {
-    const base = await readBase(data.baseFilename)
-    const { buffer, width, height } = await composeOverlay(base, data)
     return {
+      filename,
       dataUrl: `data:image/jpeg;base64,${buffer.toString('base64')}`,
       width,
       height,

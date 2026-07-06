@@ -1,11 +1,7 @@
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { uploadImage } from '@/lib/server/upload'
-import {
-  applyOverlay,
-  renderOverlayPreview,
-  MAX_TEXT,
-} from '@/lib/server/overlay'
+import { applyOverlay, MAX_TEXT } from '@/lib/server/overlay'
 import type { OverlayParams } from '@/lib/server/overlay'
 import { createCarousel } from '@/lib/server/carousel'
 import { getConnectedAccount } from '@/lib/server/account'
@@ -85,38 +81,64 @@ function Compose() {
   // working overlay draft and the live server-rendered preview.
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<OverlayParams>(DEFAULT_OVERLAY)
-  const [applying, setApplying] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [previewSrc, setPreviewSrc] = useState<string | null>(null)
-  const [rendering, setRendering] = useState(false)
+  const [applying, setApplying] = useState(false)
   const selectedIndex = images.findIndex((i) => i.id === selectedId)
   const selectedImg = selectedIndex >= 0 ? images[selectedIndex] : null
 
-  // Live preview = the real server render (same code Apply persists), debounced.
+  // Auto-apply: as the draft settles, persist the overlay onto the selected slide
+  // (debounced) so the tray and — crucially — the posted file always match what
+  // the preview shows. No manual "apply" step; the same composite backs both the
+  // preview (returned inline) and the file that gets posted.
   useEffect(() => {
-    const base = selectedImg?.baseFilename
-    if (!base || !draft.text.trim()) {
-      setRendering(false)
+    if (!selectedImg) return
+    const img = selectedImg
+    // Empty text means "no overlay" — revert to the untouched base automatically.
+    if (!draft.text.trim()) {
+      if (img.overlay) clearOverlay()
+      else setPreviewSrc(null)
+      setApplying(false)
       return
     }
-    // The already-applied file (shown via `previewSrc` on select) is byte-identical
-    // to what a re-render would produce — skip the redundant server composite.
-    if (selectedImg?.overlay && overlayEquals(selectedImg.overlay, draft)) {
-      setRendering(false)
+    // Already applied this exact overlay — nothing to persist; the shown file
+    // (via `previewSrc` on select) is byte-identical to a re-render.
+    if (img.overlay && overlayEquals(img.overlay, draft)) {
+      setApplying(false)
       return
     }
     let cancelled = false
-    setRendering(true)
+    setApplying(true)
+    const settled = draft
     const t = setTimeout(() => {
-      renderOverlayPreview({ data: { baseFilename: base, ...draft } })
+      applyOverlay({ data: { baseFilename: img.baseFilename, ...settled } })
         .then((res) => {
-          if (!cancelled) setPreviewSrc(res.dataUrl)
+          if (cancelled) return
+          setImages((prev) =>
+            prev.map((i) =>
+              i.id === img.id
+                ? {
+                    ...i,
+                    filename: res.filename,
+                    url: `/tiktok/media/${res.filename}`,
+                    overlay: settled,
+                  }
+                : i,
+            ),
+          )
+          setPreviewSrc(res.dataUrl)
+          setEditError(null)
         })
-        .catch(() => {})
+        .catch((err) => {
+          if (!cancelled)
+            setEditError(
+              err instanceof Error ? err.message : 'Failed to apply text',
+            )
+        })
         .finally(() => {
-          if (!cancelled) setRendering(false)
+          if (!cancelled) setApplying(false)
         })
-    }, 350)
+    }, 400)
     return () => {
       cancelled = true
       clearTimeout(t)
@@ -211,38 +233,6 @@ function Compose() {
     })
   }
 
-  async function saveOverlay() {
-    if (!selectedImg) return
-    // Empty text means "remove the overlay" — revert to the untouched base.
-    if (!draft.text.trim()) {
-      clearOverlay()
-      return
-    }
-    setApplying(true)
-    setEditError(null)
-    try {
-      const res = await applyOverlay({
-        data: { baseFilename: selectedImg.baseFilename, ...draft },
-      })
-      setImages((prev) =>
-        prev.map((i) =>
-          i.id === selectedImg.id
-            ? {
-                ...i,
-                filename: res.filename,
-                url: `/tiktok/media/${res.filename}`,
-                overlay: draft,
-              }
-            : i,
-        ),
-      )
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : 'Failed to apply text')
-    } finally {
-      setApplying(false)
-    }
-  }
-
   function clearOverlay() {
     if (!selectedImg) return
     setImages((prev) =>
@@ -269,15 +259,39 @@ function Compose() {
     setPosting(true)
     setError(null)
     try {
+      // The overlay auto-applies on a debounce; if Post is clicked before it
+      // fires, flush the pending draft now so the posted files match the preview.
+      let toPost = images
+      if (
+        selectedImg &&
+        draft.text.trim() &&
+        !(selectedImg.overlay && overlayEquals(selectedImg.overlay, draft))
+      ) {
+        const applied = await applyOverlay({
+          data: { baseFilename: selectedImg.baseFilename, ...draft },
+        })
+        toPost = images.map((i) =>
+          i.id === selectedImg.id
+            ? {
+                ...i,
+                filename: applied.filename,
+                url: `/tiktok/media/${applied.filename}`,
+                overlay: draft,
+              }
+            : i,
+        )
+        setImages(toPost)
+        setPreviewSrc(applied.dataUrl)
+      }
       const coverIndex = Math.max(
         0,
-        images.findIndex((i) => i.id === coverId),
+        toPost.findIndex((i) => i.id === coverId),
       )
       const res = await createCarousel({
         data: {
           title,
           description,
-          images: images.map((i) => ({ filename: i.filename })),
+          images: toPost.map((i) => ({ filename: i.filename })),
           coverIndex,
         },
       })
@@ -444,9 +458,9 @@ function Compose() {
                         alt=""
                         className="absolute inset-0 h-full w-full object-cover"
                       />
-                      {rendering && (
+                      {applying && (
                         <span className="badge absolute right-1.5 top-1.5 bg-white">
-                          Rendering…
+                          Applying…
                         </span>
                       )}
                     </div>
@@ -468,7 +482,6 @@ function Compose() {
                     hasOverlay={!!selectedImg.overlay}
                     applying={applying}
                     error={editError}
-                    onApply={saveOverlay}
                     onClear={clearOverlay}
                   />
                 ) : (
@@ -671,7 +684,6 @@ function OverlayControls({
   hasOverlay,
   applying,
   error,
-  onApply,
   onClear,
 }: {
   draft: OverlayParams
@@ -679,7 +691,6 @@ function OverlayControls({
   hasOverlay: boolean
   applying: boolean
   error: string | null
-  onApply: () => void
   onClear: () => void
 }) {
   return (
@@ -774,15 +785,14 @@ function OverlayControls({
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 pt-1">
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          onClick={onApply}
-          disabled={applying || !draft.text.trim()}
-        >
-          {applying ? 'Applying…' : 'Apply to photo'}
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+        <span className="text-xs text-muted">
+          {applying
+            ? 'Applying…'
+            : draft.text.trim()
+              ? 'Applied automatically ✓'
+              : 'Text applies to the photo automatically'}
+        </span>
         {hasOverlay && (
           <button
             type="button"
