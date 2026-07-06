@@ -27,7 +27,7 @@ const POSITIONS: ReadonlyArray<OverlayPosition> = ['top', 'center', 'bottom']
 const SIZES: ReadonlyArray<OverlaySize> = ['S', 'M', 'L']
 // Font size as a fraction of image width.
 const SIZE_SCALE: Record<OverlaySize, number> = { S: 0.055, M: 0.075, L: 0.1 }
-const MAX_TEXT = 200
+export const MAX_TEXT = 200
 
 function escapeMarkup(s: string): string {
   // Escape for Pango markup. Newlines are kept (they're line breaks).
@@ -95,7 +95,9 @@ async function composeOverlay(
   const maxWidth = Math.round(width * 0.86)
   const markup = `<span foreground="${params.color}">${escapeMarkup(params.text)}</span>`
 
-  let textBuf = await sharp({
+  // resolveWithObject gives us the raster dimensions from the render itself,
+  // avoiding a second sharp() header parse.
+  const rendered = await sharp({
     text: {
       text: markup,
       font: `sans bold ${fontSize}`,
@@ -107,18 +109,22 @@ async function composeOverlay(
     },
   })
     .png()
-    .toBuffer()
+    .toBuffer({ resolveWithObject: true })
 
-  let tm = await sharp(textBuf).metadata()
-  let tw = tm.width ?? maxWidth
-  let th = tm.height ?? fontSize
+  let textBuf = rendered.data
+  let tw = rendered.info.width
+  let th = rendered.info.height
   // Safety: if a lot of text overflows the image height, scale it to fit so the
   // composite can never exceed the canvas.
   if (th > height) {
     const scaled = Math.round((tw * height) / th)
-    textBuf = await sharp(textBuf).resize(scaled, height).png().toBuffer()
-    tw = scaled
-    th = height
+    const fit = await sharp(textBuf)
+      .resize(scaled, height)
+      .png()
+      .toBuffer({ resolveWithObject: true })
+    textBuf = fit.data
+    tw = fit.info.width
+    th = fit.info.height
   }
 
   const padV = Math.round(height * 0.045)
