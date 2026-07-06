@@ -8,6 +8,15 @@ sibling projects under `../`.
 better-sqlite3 · Tailwind CSS v4 (CSS-first) · TypeScript · Nitro for the prod server ·
 `sharp` for image normalization.
 
+## TanStack agent skills
+
+TanStack packages ship `SKILL.md` guides in `node_modules` (Start, Router, Devtools, etc.),
+wired in via the [intent](https://tanstack.com/ai/latest/docs/getting-started/agent-skills)
+CLI. See @AGENTS.md for the loading protocol. In short: before a substantial change to
+Start/Router code, run `npx @tanstack/intent@latest list` to find a matching skill, then
+`npx @tanstack/intent@latest load <package>#<skill>` and follow it. Re-run
+`npx @tanstack/intent@latest install` after adding/upgrading TanStack deps to refresh `AGENTS.md`.
+
 ## Commands
 
 - `npm run dev` — Vite dev server on :3000.
